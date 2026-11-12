@@ -1,0 +1,63 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Ambil kode
+        uses: actions/checkout@v4
+
+      - name: Siapkan proyek (otomatis ekstrak zip bila perlu)
+        shell: pwsh
+        run: |
+          $root = $null
+          if (Test-Path "main.py") {
+            $root = (Get-Location).Path
+          } else {
+            Get-ChildItem -Recurse -Filter *.zip | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } | ForEach-Object {
+              Write-Host "Ekstrak $($_.FullName)"
+              Expand-Archive -Path $_.FullName -DestinationPath "$PWD\_proyek" -Force
+            }
+            $m = Get-ChildItem -Recurse -Filter main.py | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } | Select-Object -First 1
+            if ($null -eq $m) { Write-Error "main.py tidak ditemukan di repo"; exit 1 }
+            $root = $m.DirectoryName
+          }
+          Write-Host "Folder proyek: $root"
+          "PROJECT_DIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-ChildItem $root
+
+      - name: Pasang Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pasang paket
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build EXE
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: >
+          pyinstaller --noconfirm --windowed --name JPGtoSketsa
+          --add-data "assets;assets"
+          --collect-all imageio_ffmpeg
+          --collect-all onnxruntime
+          main.py
+
+      - name: Kompres hasil
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: Compress-Archive -Path dist/JPGtoSketsa -DestinationPath JPGtoSketsa-Windows.zip
+
+      - name: Unggah hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: JPGtoSketsa-Windows
+          path: ${{ env.PROJECT_DIR }}/JPGtoSketsa-Windows.zip
